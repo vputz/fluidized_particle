@@ -6,6 +6,7 @@ from rx.subjects import Subject
 import rx
 from enum import Enum
 import tkinter as tk
+from tkinter import ttk
 from tkinter.colorchooser import askcolor
 from PIL import Image, ImageTk
 
@@ -62,42 +63,166 @@ def make_hsv_circlefinder(hsv_low, hsv_high, thumbsize):
         result = m.copy()
         im = m["image"]
         thumbs = []
-        
 
-class TrackerGUI(object):
+class HSVWidget(tk.Frame):
+
+    def __init__(self, master, text):
+
+        tk.Frame.__init__(self, master)
+        self.pack()
+        self.label = tk.Label(self, text=text)
+        self.label.pack()
+        self.slider_frame = tk.Frame(self)
+        self.slider_frame.pack()
+        self.h=0
+        self.h_label = tk.Label(self.slider_frame, text="H")
+        self.h_label.grid(row=0, column=0)
+        self.h_slider = tk.Scale(self.slider_frame, from_=0, to=255,
+                                 command=self.set_h, orient=tk.HORIZONTAL)
+        self.h_slider.grid(row=0, column=1)
+        self.s=0
+        self.s_label = tk.Label(self.slider_frame, text="S")
+        self.s_label.grid(row=1, column=0)
+        self.s_slider = tk.Scale(self.slider_frame, from_=0, to=255,
+                                 command=self.set_s, orient=tk.HORIZONTAL)
+        self.s_slider.grid(row=1, column=1)
+        self.v=0
+        self.v_label = tk.Label(self.slider_frame, text="V")
+        self.v_label.grid(row=2, column=0)
+        self.v_slider = tk.Scale(self.slider_frame, from_=0, to=255,
+                                 command=self.set_v, orient=tk.HORIZONTAL)
+        self.v_slider.grid(row=2, column=1)
+        self.slider_frame.pack()
+
+        self.thumbsize = 100
+        self.thumb_array = np.zeros((self.thumbsize, self.thumbsize,3), dtype=np.uint8)
+        self.thumb_image = Image.fromarray(self.thumb_array, mode='HSV')
+        self.thumb_tkimage = ImageTk.PhotoImage(self.thumb_image)
+        self.thumb = tk.Label(self.slider_frame, image=self.thumb_tkimage)
+        self.thumb.grid(row=0, column=2, rowspan=3, pady=5)
+        self.update_thumb()
+        
+        self.val_stream = Subject()
+
+    def set_h(self, val):
+        self.h = int(val)
+        self.update_val()
+
+    def set_s(self, val):
+        self.s = int(val)
+        self.update_val()
+
+    def set_v(self, val):
+        self.v = int(val)
+        self.update_val()
+
+    def update_thumb(self):
+        self.thumb_image = Image.fromarray(self.thumb_array, mode='HSV')
+        self.thumb_tkimage = ImageTk.PhotoImage(self.thumb_image)
+        self.thumb.configure(image=self.thumb_tkimage)
+
+        
+    def update_val(self):
+        # update thumb
+        self.thumb_array[:,:,0] = self.h
+        self.thumb_array[:,:,1] = self.s
+        self.thumb_array[:,:,2] = self.v
+        self.update_thumb()
+        self.val_stream.on_next({'h':self.h, 's':self.s, 'v':self.v})
+        
+        
+class ColorChooserFrame(tk.Frame):
+
+    def __init__(self, master):
+
+        tk.Frame.__init__(self, master)
+        self.pack()
+
+        self.THUMBWIDTH = 320
+        self.THUMBHEIGHT = 240
+        self.THUMB_SIZE = (self.THUMBHEIGHT, self.THUMBWIDTH)
+
+        self.instructions = tk.Label(self, text=\
+"""Change the low and high settings for H,S,V such that the mask in the
+right-hand frame shows only the colored ping-pong ball""",
+                                     wraplength=640)
+        self.instructions.pack()
+        
+        self.bars_frame = tk.Frame(self)
+        self.bars_frame.pack()
+        self.low_hsv = HSVWidget(self.bars_frame, "Low value")
+        self.low_hsv.pack(side=tk.LEFT)
+        self.low_subscription = self.low_hsv.val_stream.subscribe(self.set_low)
+        self.high_hsv = HSVWidget(self.bars_frame, "High value")
+        self.high_hsv.pack(side=tk.LEFT)
+        self.high_subscription = self.high_hsv.val_stream.subscribe(self.set_high)
+        self.set_high({'h':0, 's':0, 'v':0})
+        self.set_low({'h':0, 's':0, 'v':0})
+
+        self.thumb_frame = tk.Frame(self)
+        self.thumb_frame.pack()
+        black = np.zeros(self.THUMB_SIZE)
+        self.black_thumb = ImageTk.PhotoImage(Image.fromarray(black))
+        self.live_thumb = tk.Label(self.thumb_frame, image=self.black_thumb)
+        self.live_thumb.pack(side=tk.LEFT, padx=10)
+
+        self.mask_thumb = tk.Label(self.thumb_frame, image=self.black_thumb)
+        self.mask_thumb.pack(side=tk.LEFT, padx=10)
+
+        self.cam_subscription = None
+
+        self.bind("<Destroy>", self.dispose_subscriptions)
+
+    def subscribe_to_camera_stream(self, camera_stream, delay, scheduler):
+        self.throttled_camera = camera_stream.throttle_last(delay) #.throttle_last(delay, scheduler)
+        self.cam_subscription = self.throttled_camera.subscribe(self.on_new_image)
+
+    def dispose_subscriptions(self, event=None):
+        #self.throttled_camera.dispose()
+        print("disposing color mask subscriptions")
+        self.cam_subscription.dispose()
+    
+    def set_low(self, d):
+        """d should be a dict keyed by hsv"""
+        self.high_match = (d['h'],d['s'],d['v'])
+
+    def set_high(self, d):
+        """d should be a dict keyed by hsv"""
+        self.low_match = (d['h'],d['s'],d['v'])
+
+    def on_new_image(self, d):
+        # probably only update this if focused
+        print("On new image")
+        im = d['image']
+        resized = cv2.resize(im, (self.THUMBWIDTH, self.THUMBHEIGHT))
+        thumb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        thumb_image = ImageTk.PhotoImage(Image.fromarray(thumb))
+        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, self.low_match, self.high_match)
+        mask_image = ImageTk.PhotoImage(Image.fromarray(mask))
+        #self.live_thumb.config(image = thumb_image)
+        #self.mask_thumb.config(image = mask_image)
+
+class LiveVideoFrame(tk.Frame):
 
     def __init__(self, master, camera):
-        self.frame = tk.Frame(master)
-        self.frame.pack()
-        self.update_button = tk.Button(self.frame,
+
+        tk.Frame.__init__(self, master)
+        self.pack()
+        self.update_button = tk.Button(self,
                                        text = "Set Background",
                                        command = self.acquire_background)
         self.update_button.pack()
 
-        self.start_feed_button = tk.Button(self.frame,
-                                           text = "Start Feed",
-                                           command = self.start_feed)
-        self.start_feed_button.pack()
-
-        self.stop_feed_button = tk.Button(self.frame,
-                                          text = "Stop Feed",
-                                          command = self.stop_feed)
-        self.stop_feed_button.pack()
-
-        self.color_low_button = tk.Button(self.frame, text = "Lower Limit", command = self.ask_lower_match)
-        self.color_low_button.pack()
-        self.color_high_button = tk.Button(self.frame, text = "Upper Limit", command = self.ask_upper_match)
-        self.color_high_button.pack()
-
         self.lower_match = (35,59,54)
         self.upper_match = (91,255,255)
 
-        blackarr = np.zeros((THUMBWIDTH,THUMBHEIGHT))
+        blackarr = np.zeros((THUMBHEIGHT,THUMBWIDTH))
         self.thumb = ImageTk.PhotoImage(Image.fromarray(blackarr))
-        self.monitor = tk.Label(self.frame, image=self.thumb)
+        self.monitor = tk.Label(self, image=self.thumb)
         self.monitor.pack()
 
-        self.outline = tk.Label(self.frame, image=self.thumb)
+        self.outline = tk.Label(self, image=self.thumb)
         self.outline.pack()
 
         self.background = None
@@ -107,21 +232,17 @@ class TrackerGUI(object):
         self.previous_thumb = None
         self.latest_thumb = None
 
-
-        self.camera = camera
-        self.camera.image_stream.subscribe(self.on_new_image)
-
-        self.scheduler = rx.concurrency.TkinterScheduler(master)
-
         self.feed_sub = None
 
-    def ask_lower_match(self):
-        self.lower_match = askcolor()[0]
-        print(self.lower_match)
-        
-    def ask_upper_match(self):
-        self.upper_match = askcolor()[0]
-        print(self.upper_match)
+        self.bind("<Destroy>", self.dispose_subscriptions)
+
+    def subscribe_to_camera_stream(self, stream, delay, scheduler):
+        self.throttled_camera = stream.throttle_last(delay)#.throttle_last(delay, scheduler)
+        self.camera_subscription = self.throttled_camera.subscribe(self.on_new_image)
+
+    def dispose_subscriptions(self, event=None):
+        print("disposing live view subscriptions")
+        self.camera_subscription.dispose()
         
     def on_new_image(self, d):
         im = d["image"]
@@ -139,19 +260,7 @@ class TrackerGUI(object):
         self.background = None
         self.background_thumb = None
         self.camera.capture_image()
-    
-    def acquire(self, val=0):
-        self.camera.capture_image()
-        return val
 
-    def start_feed(self):
-        if self.feed_sub is None:
-            self.feed_sub = self.scheduler.schedule_periodic(50, self.acquire)
-
-    def stop_feed(self):
-        if self.feed_sub is not None:
-            self.feed_sub.dispose()
-            self.feed_sub = None
         
     def set_monitor(self):
         # im should be a numpy array
@@ -188,7 +297,51 @@ class TrackerGUI(object):
 
         self.diff_thumb = ImageTk.PhotoImage(dim)
         self.outline.configure(image = self.diff_thumb)
+
+
+class TrackerGUI(object):
+
+    def __init__(self, master, camera):
+
+        self.notebook = ttk.Notebook(master)
+        self.scheduler = rx.concurrency.TkinterScheduler(master)
+        self.FPS = 100
+        self.camera = camera
+        self.feed_sub = None
+
+        self.color_chooser_frame = ColorChooserFrame(self.notebook)
         
+
+        self.live_video_frame = LiveVideoFrame(self.notebook, camera)
+
+        self.wire_subscriptions(camera)
+        self.notebook.add(self.color_chooser_frame, text="Color Chooser")
+        self.notebook.add(self.live_video_frame, text="Live Video")
+        self.notebook.pack()
+        self.notebook.bind("<Destroy>", self.on_destroy)
+        self.start_feed()
+
+    def wire_subscriptions(self, camera):
+        self.live_video_frame.subscribe_to_camera_stream(camera.image_stream, 200, self.scheduler)
+        self.color_chooser_frame.subscribe_to_camera_stream(camera.image_stream, 500, self.scheduler)
+
+    def on_destroy(self, event):
+        print("stopping feed")
+        self.stop_feed()
+        
+    def acquire(self, val=0):
+        self.camera.capture_image()
+        return val
+
+    def start_feed(self):
+        if self.feed_sub is None:
+            self.feed_sub = self.scheduler.schedule_periodic(50, self.acquire)
+
+    def stop_feed(self):
+        if self.feed_sub is not None:
+            self.feed_sub.dispose()
+            self.feed_sub = None
+    
     
 if __name__ == "__main__":
     misc_log = Subject()
