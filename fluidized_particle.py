@@ -66,7 +66,7 @@ def make_hsv_circlefinder(hsv_low, hsv_high, thumbsize):
 
 class HSVWidget(tk.Frame):
 
-    def __init__(self, master, text):
+    def __init__(self, master, text, init_val=(0,0,0)):
 
         tk.Frame.__init__(self, master)
         self.pack()
@@ -74,23 +74,26 @@ class HSVWidget(tk.Frame):
         self.label.pack()
         self.slider_frame = tk.Frame(self)
         self.slider_frame.pack()
-        self.h=0
+        self.h=tk.IntVar(value=init_val[0])
         self.h_label = tk.Label(self.slider_frame, text="H")
         self.h_label.grid(row=0, column=0)
         self.h_slider = tk.Scale(self.slider_frame, from_=0, to=255,
-                                 command=self.set_h, orient=tk.HORIZONTAL)
+                                 variable=self.h,
+                                 command=self.update_val, orient=tk.HORIZONTAL)
         self.h_slider.grid(row=0, column=1)
-        self.s=0
+        self.s=tk.IntVar(value=init_val[1])
         self.s_label = tk.Label(self.slider_frame, text="S")
         self.s_label.grid(row=1, column=0)
         self.s_slider = tk.Scale(self.slider_frame, from_=0, to=255,
-                                 command=self.set_s, orient=tk.HORIZONTAL)
+                                 variable=self.s,
+                                 command=self.update_val, orient=tk.HORIZONTAL)
         self.s_slider.grid(row=1, column=1)
-        self.v=0
+        self.v=tk.IntVar(value=init_val[2])
         self.v_label = tk.Label(self.slider_frame, text="V")
         self.v_label.grid(row=2, column=0)
         self.v_slider = tk.Scale(self.slider_frame, from_=0, to=255,
-                                 command=self.set_v, orient=tk.HORIZONTAL)
+                                 variable=self.v,
+                                 command=self.update_val, orient=tk.HORIZONTAL)
         self.v_slider.grid(row=2, column=1)
         self.slider_frame.pack()
 
@@ -104,38 +107,36 @@ class HSVWidget(tk.Frame):
         
         self.val_stream = Subject()
 
-    def set_h(self, val):
-        self.h = int(val)
-        self.update_val()
-
-    def set_s(self, val):
-        self.s = int(val)
-        self.update_val()
-
-    def set_v(self, val):
-        self.v = int(val)
-        self.update_val()
-
     def update_thumb(self):
         self.thumb_image = Image.fromarray(self.thumb_array, mode='HSV')
         self.thumb_tkimage = ImageTk.PhotoImage(self.thumb_image)
         self.thumb.configure(image=self.thumb_tkimage)
 
         
-    def update_val(self):
+    def update_val(self, _):
         # update thumb
-        self.thumb_array[:,:,0] = self.h
-        self.thumb_array[:,:,1] = self.s
-        self.thumb_array[:,:,2] = self.v
+        hsv = [self.h.get(), self.s.get(), self.v.get()]
+        self.thumb_array[:,:,0] = hsv[0]
+        self.thumb_array[:,:,1] = hsv[1]
+        self.thumb_array[:,:,2] = hsv[2]
         self.update_thumb()
-        self.val_stream.on_next({'h':self.h, 's':self.s, 'v':self.v})
+        self.val_stream.on_next({'h':hsv[0], 's':hsv[1], 'v':hsv[2]})
         
-        
-class ColorChooserFrame(tk.Frame):
+class FrameTab(tk.Frame):
 
-    def __init__(self, master):
+    def __init__(self, master, text):
 
         tk.Frame.__init__(self, master)
+        self.text = text
+
+    def is_selected(self):
+        return (self.master.tab(self.master.select(), "text") == self.text)
+        
+class ColorChooserFrame(FrameTab):
+
+    def __init__(self, master, text):
+
+        FrameTab.__init__(self, master, text)
         self.pack()
 
         self.THUMBWIDTH = 320
@@ -150,10 +151,10 @@ right-hand frame shows only the colored ping-pong ball""",
         
         self.bars_frame = tk.Frame(self)
         self.bars_frame.pack()
-        self.low_hsv = HSVWidget(self.bars_frame, "Low value")
+        self.low_hsv = HSVWidget(self.bars_frame, "Low value", (35,59,54))
         self.low_hsv.pack(side=tk.LEFT)
         self.low_subscription = self.low_hsv.val_stream.subscribe(self.set_low)
-        self.high_hsv = HSVWidget(self.bars_frame, "High value")
+        self.high_hsv = HSVWidget(self.bars_frame, "High value", (91,255,255))
         self.high_hsv.pack(side=tk.LEFT)
         self.high_subscription = self.high_hsv.val_stream.subscribe(self.set_high)
         self.set_high({'h':0, 's':0, 'v':0})
@@ -174,7 +175,7 @@ right-hand frame shows only the colored ping-pong ball""",
         self.bind("<Destroy>", self.dispose_subscriptions)
 
     def subscribe_to_camera_stream(self, camera_stream, delay, scheduler):
-        self.throttled_camera = camera_stream.throttle_last(delay) #.throttle_last(delay, scheduler)
+        self.throttled_camera = camera_stream#.throttle_last(delay, scheduler)
         self.cam_subscription = self.throttled_camera.subscribe(self.on_new_image)
 
     def dispose_subscriptions(self, event=None):
@@ -184,30 +185,33 @@ right-hand frame shows only the colored ping-pong ball""",
     
     def set_low(self, d):
         """d should be a dict keyed by hsv"""
-        self.high_match = (d['h'],d['s'],d['v'])
+        self.low_match = (d['h'],d['s'],d['v'])
 
     def set_high(self, d):
         """d should be a dict keyed by hsv"""
-        self.low_match = (d['h'],d['s'],d['v'])
+        self.high_match = (d['h'],d['s'],d['v'])
 
     def on_new_image(self, d):
         # probably only update this if focused
-        print("On new image")
-        im = d['image']
-        resized = cv2.resize(im, (self.THUMBWIDTH, self.THUMBHEIGHT))
-        thumb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        thumb_image = ImageTk.PhotoImage(Image.fromarray(thumb))
-        hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.low_match, self.high_match)
-        mask_image = ImageTk.PhotoImage(Image.fromarray(mask))
-        #self.live_thumb.config(image = thumb_image)
-        #self.mask_thumb.config(image = mask_image)
+        if self.is_selected():
+            im = d['image']
+            resized = cv2.resize(im, (self.THUMBWIDTH, self.THUMBHEIGHT))
+            thumb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+            self.thumb_image = ImageTk.PhotoImage(Image.fromarray(thumb))
+            hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, self.low_match, self.high_match)
+            mask = cv2.erode(mask, None, iterations=2)
+            mask = cv2.dilate(mask, None, iterations=2)
+            print (self.low_match, self.high_match)
+            self.mask_image = ImageTk.PhotoImage(Image.fromarray(mask))
+            self.live_thumb.config(image = self.thumb_image)
+            self.mask_thumb.config(image = self.mask_image)
 
-class LiveVideoFrame(tk.Frame):
+class LiveVideoFrame(FrameTab):
 
-    def __init__(self, master, camera):
+    def __init__(self, master, text):
 
-        tk.Frame.__init__(self, master)
+        FrameTab.__init__(self, master, text)
         self.pack()
         self.update_button = tk.Button(self,
                                        text = "Set Background",
@@ -237,7 +241,7 @@ class LiveVideoFrame(tk.Frame):
         self.bind("<Destroy>", self.dispose_subscriptions)
 
     def subscribe_to_camera_stream(self, stream, delay, scheduler):
-        self.throttled_camera = stream.throttle_last(delay)#.throttle_last(delay, scheduler)
+        self.throttled_camera = stream#.throttle_last(delay, scheduler)
         self.camera_subscription = self.throttled_camera.subscribe(self.on_new_image)
 
     def dispose_subscriptions(self, event=None):
@@ -245,16 +249,17 @@ class LiveVideoFrame(tk.Frame):
         self.camera_subscription.dispose()
         
     def on_new_image(self, d):
-        im = d["image"]
-        hack = d['t']
-        if self.background is None:
-            self.background = im
-            self.background_thumb = cv2.resize(im, THUMB_SIZE)
-        else :
-            self.previous_image = self.latest_image
-            self.previous_thumb = self.latest_thumb
-            self.latest_image = im
-            self.set_monitor()
+        if self.is_selected():
+            im = d["image"]
+            hack = d['t']
+            if self.background is None:
+                self.background = im
+                self.background_thumb = cv2.resize(im, THUMB_SIZE)
+            else :
+                self.previous_image = self.latest_image
+                self.previous_thumb = self.latest_thumb
+                self.latest_image = im
+                self.set_monitor()
 
     def acquire_background(self):
         self.background = None
@@ -309,14 +314,14 @@ class TrackerGUI(object):
         self.camera = camera
         self.feed_sub = None
 
-        self.color_chooser_frame = ColorChooserFrame(self.notebook)
+        self.color_chooser_frame = ColorChooserFrame(self.notebook, "Color Chooser")
         
 
-        self.live_video_frame = LiveVideoFrame(self.notebook, camera)
+        self.live_video_frame = LiveVideoFrame(self.notebook, "Live Video")
 
         self.wire_subscriptions(camera)
-        self.notebook.add(self.color_chooser_frame, text="Color Chooser")
-        self.notebook.add(self.live_video_frame, text="Live Video")
+        self.notebook.add(self.color_chooser_frame, text=self.color_chooser_frame.text)
+        self.notebook.add(self.live_video_frame, text=self.live_video_frame.text)
         self.notebook.pack()
         self.notebook.bind("<Destroy>", self.on_destroy)
         self.start_feed()
