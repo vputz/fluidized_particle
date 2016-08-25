@@ -52,17 +52,64 @@ THUMB_SIZE = (THUMBWIDTH, THUMBHEIGHT)
 BLUR_SIZE = (7,7)
 WHITE=(255,255,255)
 
+
+def largest_contour_circle(contours):
+    """
+    Finds the largest contour from a list of contours, and computes the 
+    minimum enclosing circle and centroid.  Returns (circle, centroid)
+    where circle is the min enclosing circle ((x,y), radius) and centroid
+    is the (x,y) position of the center of the blob
+    From Adrian's blog (pyimagesearch)
+    """
+    if len(contours) > 0:
+        c = max(contours, key=cv2.contourArea)
+        circle = cv2.minEnclosingCircle(c)
+        M = cv2.moments(c)
+        center = (int(M["m10"]/M["m00"]),
+                  int(M["m01"]/M["m00"]))
+
+        return circle, center
+    else :
+        return None, None
+
 # A circlefinder function maps (image, t) into
-# (image, t, thumbs, position) where
-# thumbs is a record of intermediate steps.
+# (image, t, steps, position) where
+# steps is a record of intermediate steps.
 # this creates such a circlefinder function based on HSV
 # masks
-def make_hsv_circlefinder(hsv_low, hsv_high, thumbsize):
+def make_hsv_circlefinder(hsv_low, hsv_high, resized_size=None):
 
-    def result(m):
+    def finder(m):
         result = m.copy()
-        im = m["image"]
-        thumbs = []
+
+        im = m["image"] if resized_size is None else cv2.resize(m["image"], resized_size)
+
+        hsv = cv2.cvtColor(im, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, hsv_low, hsv_high)
+        mask = cv2.erode(mask, None, iterations=2)
+        mask = cv2.dilate(mask, None, iterations=2)
+        # get the contours
+        contours = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+        result["contours"] = contours
+
+        circle, centroid_center = largest_contour_circle(contours)
+
+        result["position"] = centroid_center
+        CIRCLE_COLOR = (0,255,255)
+        CIRCLE_THICKNESS = 2
+        CENTER_RADIUS = 5
+        if circle is not None:
+            ((x,y),radius) = circle
+            if circle[1] > 10 :
+                cv2.circle(im, (int(x), int(y)), int (radius),
+                           CIRCLE_COLOR, CIRCLE_THICKNESS)
+                cv2.circle(im, centroid_center, CENTER_RADIUS, CIRCLE_THICKNESS)
+                
+        result["steps"] = [im, mask]
+
+        return result
+
+    return finder
 
 class HSVWidget(tk.Frame):
 
@@ -249,6 +296,7 @@ class LiveVideoFrame(FrameTab):
         self.camera_subscription.dispose()
         
     def on_new_image(self, d):
+        self.last_step = d
         if self.is_selected():
             im = d["image"]
             hack = d['t']
@@ -269,37 +317,18 @@ class LiveVideoFrame(FrameTab):
         
     def set_monitor(self):
         # im should be a numpy array
-        print("mon")
-        resized = cv2.resize(self.latest_image, THUMB_SIZE)
-        thumb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        #edged = cv2.Canny(resized, 50, 100)
-        if (self.previous_thumb is not None):
-            hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-            mask = cv2.inRange(hsv, self.lower_match, self.upper_match)
-            mask = cv2.erode( mask, None, iterations=2)
-            mask = cv2.dilate(mask, None, iterations=2)
-            contours = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
+        finder = make_hsv_circlefinder(self.lower_match, self.upper_match)
 
-            if len(contours) > 0 :
-                # from adrian, find the largest contour and min
-                # enclosing circle and centroid
-                c = max(contours, key=cv2.contourArea)
-                ((x,y),radius) = cv2.minEnclosingCircle(c)
-                M = cv2.moments(c)
-                # learn more about this
-                center = (int(M["m10"]/M["m00"]),
-                          int(M["m01"]/M["m00"]))
-                if radius > 10 :
-                    cv2.circle(thumb, (int(x), int(y)), int(radius), (0,255,255), 2)
-                    cv2.circle(thumb, center, 5, (0,255,255), 2)
-        else:
-            mask = np.zeros(resized.shape, dtype=resized.dtype)
+        this_step = finder(self.last_step)
+
+        thumb = cv2.resize(this_step["steps"][0], THUMB_SIZE)
+        self.latest_thumb = thumb
         im = Image.fromarray(thumb)
-        dim = Image.fromarray(mask)
-        self.latest_thumb = resized
         self.thumb = ImageTk.PhotoImage(im)
         self.monitor.configure(image=self.thumb)
 
+        mask_thumb = cv2.resize(this_step["steps"][1], THUMB_SIZE)
+        dim = Image.fromarray(mask_thumb)
         self.diff_thumb = ImageTk.PhotoImage(dim)
         self.outline.configure(image = self.diff_thumb)
 
