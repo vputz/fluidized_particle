@@ -1,6 +1,7 @@
 import numpy as np
 import time
 import cv2
+import csv
 import flycapture2 as fc2
 from rx.subjects import Subject
 import rx
@@ -418,7 +419,7 @@ class DataAcquisitionFrame(FrameTab):
         self.camera_stream = None
         self.step_stream = None
         self.step_subscription = None
-
+        self.acc = None
         self.circlefinder = make_hsv_circlefinder(low,high)
 
     def on_new_limits(self, limits):
@@ -429,13 +430,31 @@ class DataAcquisitionFrame(FrameTab):
 
         self.step_stream = self.camera_stream.map(self.circlefinder)
         self.step_subscription = self.step_stream.subscribe(self.on_new_step)
-        self.data_subscription = self.step_stream.scan(accumulate_steps, seed=empty_acc()).subscribe(self.on_new_data)
+        self.data_subscription = self.step_stream.scan(accumulate_steps, seed=empty_acc()).subscribe(on_next=self.on_new_data)
 
     def on_new_step(self, step):
         if self.is_selected() :
             thumb = cv2.resize(step['steps'][0], (self.thumb_width, self.thumb_height))
             self.image = ImageTk.PhotoImage(Image.fromarray(thumb))
             self.monitor.config(image=self.image)
+
+    def on_data_completed(self):
+        # open data dialog for saving the data stream
+        if self.acc is not None and len(self.acc) > 0:
+            f = tk.filedialog.asksaveasfile(mode='w',
+                                            title="{0} Datapoints.  Save CSV or cancel".format(len(self.acc)),
+                                            filetypes=(("CSV", "*.csv"),("All Files", "*.*")))
+            if f is None:
+                return
+            else:
+                writer = csv.writer(f)
+                columns = ["t","x","y","vx","vy"]
+                writer.writerow(columns)
+                for row in zip(*[self.acc[x] for x in columns]) :
+                    writer.writerow(row)
+                f.close()
+
+        self.acc = None
 
     def update_v_hist(self, acc):
         a = self.v_fig.gca()
@@ -452,6 +471,7 @@ class DataAcquisitionFrame(FrameTab):
         a = self.x_fig.gca()
         
     def on_new_data(self, acc):
+        self.acc = acc
         self.num_points.config(text="Num Points: {0}".format(len(acc['t'])))
         EVERY=10
         if len(acc['t']) % EVERY == 0:
@@ -470,6 +490,7 @@ class DataAcquisitionFrame(FrameTab):
     def stop_acquisition(self):
         self.dispose_subscriptions()
         # ask to save data
+        self.on_data_completed()
         
         
 class TrackerGUI(object):
