@@ -400,20 +400,28 @@ class DataAcquisitionFrame(FrameTab):
         self.monitor = tk.Label(self, image=self.monitor_image)
         self.monitor.grid(row=1,column=0)
 
-        self.stats_frame = tk.Frame(self)
-        self.num_points = tk.Label(self.stats_frame, text="Num Points:")
-        self.num_points.pack()
-        self.stats_frame.grid(row=1,column=1)
+        self.pos_fig = Figure(figsize=(3,2), dpi=100)
+        self.pos_axis = self.pos_fig.add_subplot(111)
+        self.pos_fig.tight_layout()
+        self.pos_graph = FigureCanvasTkAgg(self.pos_fig, master=self)
+        self.pos_graph.show()
+        self.pos_graph.get_tk_widget().grid(row=1,column=1)
+        self.pos_graph_tightened=False
 
         self.v_fig = Figure(figsize=(3,2), dpi=100)
+        self.v_axis = self.v_fig.add_subplot(111)
+        self.v_fig.tight_layout()
         self.v_hist = FigureCanvasTkAgg(self.v_fig, master=self)
         self.v_hist.show()
         self.v_hist.get_tk_widget().grid(row=2,column=0)
+        self.v_fig_tightened = False
 
-        self.x_fig = Figure(figsize=(3,2), dpi=100)
-        self.x_hist = FigureCanvasTkAgg(self.x_fig, master=self)
-        self.x_hist.show()
-        self.x_hist.get_tk_widget().grid(row=2,column=1)
+        self.r_fig = Figure(figsize=(3,2), dpi=100)
+        self.r_axis = self.r_fig.add_subplot(111)
+        self.r_hist = FigureCanvasTkAgg(self.r_fig, master=self)
+        self.r_hist.show()
+        self.r_hist.get_tk_widget().grid(row=2,column=1)
+        self.r_fig_tightened = False
 
         self.data_subscription = None
         self.camera_stream = None
@@ -456,26 +464,61 @@ class DataAcquisitionFrame(FrameTab):
 
         self.acc = None
 
-    def update_v_hist(self, acc):
-        a = self.v_fig.gca()
+    def update_pos_graph(self, acc):
+        positions = np.array([x for x in zip(acc['x'], acc['y']) if not (np.isnan(x[0]) and (not np.isnan(x[1])))])
+
+        a = self.pos_axis
         a.clear()
-        a = self.v_fig.add_subplot(111)
+        a.scatter(positions[:,1], positions[:,0], alpha=0.5)
+        a.set_title("y pos vs x (not SI)")
+        if not self.pos_graph_tightened :
+            self.pos_fig.tight_layout()
+            self.pos_graph_tightened = True
+        self.pos_graph.draw()
+        
+
+    def update_v_hist(self, acc):
         v_components = np.array([x for x in zip(acc['vx'], acc['vy']) if (not np.isnan(x[0])) and (not np.isnan(x[1]))])
         vs = np.sqrt((v_components*v_components).sum(1))
+
+        a = self.v_axis
+        a.clear()
         n, bins, patches = a.hist(vs, normed=1)
-        a.set_title("Normalized hist of |v|")
-        self.v_fig.tight_layout()
+        a.set_title("Normalized hist of |v|--not SI")
+        if not self.v_fig_tightened :
+            self.v_fig.tight_layout()
+            self.v_fig_tightened = True
         self.v_hist.draw()
 
-    def update_x_hist(self, acc):
-        a = self.x_fig.gca()
+    def update_r_hist(self, acc):
+        """
+        The R in the R histogram represents the "radial distance", but that
+        begs the question of what the "center" is.  This is a little tricky;
+        for the moment we will define the "center" as the average position,
+        and thus must recalculate the R distribution after every new position.
+        """
+        positions = np.array([x for x in zip(acc['vx'], acc['vy']) if (not np.isnan(x[0])) and (not np.isnan(x[1]))])
+        center = positions.sum(0)
+        drs = positions[:]-center
+        rs = np.sqrt((drs*drs).sum(1))
+
+
+        a = self.r_axis
+        a.clear()
+        n, bins, patches = a.hist(rs, normed=1)
+        a.set_title("Normalized hist of |r|--not SI")
+        if not self.r_fig_tightened :
+            self.r_fig.tight_layout()
+            self.r_fig_tightened = True
+        self.r_hist.draw()
         
     def on_new_data(self, acc):
         self.acc = acc
-        self.num_points.config(text="Num Points: {0}".format(len(acc['t'])))
         EVERY=10
         if len(acc['t']) % EVERY == 0:
+            self.update_pos_graph(acc)
             self.update_v_hist(acc)
+            self.update_r_hist(acc)
 
     def dispose_subscriptions(self):
         if self.step_stream is not None:
