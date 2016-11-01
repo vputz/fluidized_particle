@@ -368,8 +368,9 @@ class LiveVideoFrame(FrameTab):
 
     def take_screenshot(self):
         filename = tk.filedialog.asksaveasfilename(
-                                            title="Save Screenshot",
-                                            filetypes=(("png", "*.png"),("PNG Files", "*.png")))
+            defaultextension=".png",
+            title="Save Screenshot",
+            filetypes=(("png", "*.png"),("PNG Files", "*.png")))
         if filename is None:
             return
         else :
@@ -462,7 +463,8 @@ class DataAcquisitionFrame(FrameTab):
         if self.acc is not None and len(self.acc) > 0:
             f = tk.filedialog.asksaveasfile(mode='w',
                                             title="{0} Datapoints.  Save CSV or cancel".format(len(self.acc)),
-                                            filetypes=(("CSV", "*.csv"),("All Files", "*.*")))
+                                            filetypes=(("CSV", "*.csv"),("All Files", "*.*")),
+                                            defaultextension=".csv")
             if f is not None:
                 writer = csv.writer(f)
                 columns = ["t","x","y","vx","vy"]
