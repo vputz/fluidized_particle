@@ -2,7 +2,7 @@ import numpy as np
 import time
 import cv2
 import csv
-import flycapture2 as fc2
+#import flycapture2 as fc2
 from rx.subjects import Subject
 import rx
 from enum import Enum
@@ -306,11 +306,14 @@ class LiveVideoFrame(FrameTab):
 
         FrameTab.__init__(self, master, text)
         self.pack()
-        self.update_button = tk.Button(self,
-                                       text = "Set Background",
-                                       command = self.acquire_background)
-        self.update_button.pack()
-
+        #self.update_button = tk.Button(self,
+        #                               text = "Set Background",
+        #                               command = self.acquire_background)
+        #self.update_button.pack()
+        self.screenshot_button = tk.Button(self,
+                                           text="Screenshot",
+                                           command=self.take_screenshot)
+        self.screenshot_button.pack()
 
         blackarr = np.zeros((THUMBHEIGHT,THUMBWIDTH))
         self.thumb = ImageTk.PhotoImage(Image.fromarray(blackarr))
@@ -363,6 +366,14 @@ class LiveVideoFrame(FrameTab):
         self.background_thumb = None
         self.camera.capture_image()
 
+    def take_screenshot(self):
+        filename = tk.filedialog.asksaveasfilename(
+                                            title="Save Screenshot",
+                                            filetypes=(("png", "*.png"),("PNG Files", "*.png")))
+        if filename is None:
+            return
+        else :
+            cv2.imwrite(filename, self.latest_image)
         
     def set_monitor(self):
         # im should be a numpy array
@@ -452,9 +463,7 @@ class DataAcquisitionFrame(FrameTab):
             f = tk.filedialog.asksaveasfile(mode='w',
                                             title="{0} Datapoints.  Save CSV or cancel".format(len(self.acc)),
                                             filetypes=(("CSV", "*.csv"),("All Files", "*.*")))
-            if f is None:
-                return
-            else:
+            if f is not None:
                 writer = csv.writer(f)
                 columns = ["t","x","y","vx","vy"]
                 writer.writerow(columns)
@@ -462,14 +471,18 @@ class DataAcquisitionFrame(FrameTab):
                     writer.writerow(row)
                 f.close()
 
-        self.acc = None
+        self.acc = empty_acc()
+        self.update_pos_graph(self.acc)
+        self.update_v_hist(self.acc)
+        self.update_r_hist(self.acc)
 
     def update_pos_graph(self, acc):
         positions = np.array([x for x in zip(acc['x'], acc['y']) if not (np.isnan(x[0]) and (not np.isnan(x[1])))])
 
         a = self.pos_axis
         a.clear()
-        a.scatter(positions[:,1], positions[:,0], alpha=0.5)
+        if (len(positions) > 0) :
+            a.scatter(positions[:,1], positions[:,0], alpha=0.5)
         a.set_title("y pos vs x (not SI)")
         if not self.pos_graph_tightened :
             self.pos_fig.tight_layout()
@@ -479,11 +492,13 @@ class DataAcquisitionFrame(FrameTab):
 
     def update_v_hist(self, acc):
         v_components = np.array([x for x in zip(acc['vx'], acc['vy']) if (not np.isnan(x[0])) and (not np.isnan(x[1]))])
-        vs = np.sqrt((v_components*v_components).sum(1))
+        if len(v_components) > 0 :
+            vs = np.sqrt((v_components*v_components).sum(1))
 
         a = self.v_axis
         a.clear()
-        n, bins, patches = a.hist(vs, normed=1)
+        if len(v_components) > 0 :
+            n, bins, patches = a.hist(vs, bins=50, normed=1)
         a.set_title("Normalized hist of |v|--not SI")
         if not self.v_fig_tightened :
             self.v_fig.tight_layout()
@@ -500,12 +515,14 @@ class DataAcquisitionFrame(FrameTab):
         positions = np.array([x for x in zip(acc['vx'], acc['vy']) if (not np.isnan(x[0])) and (not np.isnan(x[1]))])
         center = positions.sum(0)
         drs = positions[:]-center
-        rs = np.sqrt((drs*drs).sum(1))
+        if len(positions) > 0:
+            rs = np.sqrt((drs*drs).sum(1))
 
 
         a = self.r_axis
         a.clear()
-        n, bins, patches = a.hist(rs, normed=1)
+        if len(positions) > 0:
+            n, bins, patches = a.hist(rs, bins=50, normed=1)
         a.set_title("Normalized hist of |r|--not SI")
         if not self.r_fig_tightened :
             self.r_fig.tight_layout()
@@ -514,7 +531,7 @@ class DataAcquisitionFrame(FrameTab):
         
     def on_new_data(self, acc):
         self.acc = acc
-        EVERY=10
+        EVERY=100
         if len(acc['t']) % EVERY == 0:
             self.update_pos_graph(acc)
             self.update_v_hist(acc)
